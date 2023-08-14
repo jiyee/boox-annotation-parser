@@ -7,10 +7,9 @@ from typing import List, Optional, TextIO, Tuple
 
 class ParsingPhase(Enum):
     SECTION_NAME = 0
-    TIME = 1
+    TIME_AND_PAGE_NO = 1
     ORIGINAL_TEXT = 2
     ANNOTATIONS = 3
-    PAGE_NUMBER = 4
     END = 5
 
 
@@ -18,9 +17,9 @@ class ParsingPhase(Enum):
 class Annotation:
     section_name: str
     time: datetime.datetime
+    page_number: int
     original_text: str
     annotations: str
-    page_number: int
 
 
 @dataclasses.dataclass
@@ -30,13 +29,13 @@ class AnnotationList:
     annotations: List[Annotation]
 
 
-def parse_name(line: str) -> str:
-    match = re.compile(r".*<<(.*)>>").search(line)
+def parse_name_and_author(line: str) -> Tuple[str, str]:
+    match = re.compile(r"^.*<<(.*)>>(.*)$").search(line)
 
     if not match:
-        raise ValueError(f"Could not find name in line: {line}")
+        raise ValueError(f"Could not find book name and author in line: {line}")
 
-    return match.group(1)
+    return match.group(1), match.group(2)
 
 
 def parse_author(line: str) -> str:
@@ -44,15 +43,18 @@ def parse_author(line: str) -> str:
 
 
 def parse_section_name(line: str) -> str:
+    match = re.compile(r".*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*\|\s*Page No\.:\s*(\d+).*").search(line)
+    if match:
+        return None
+
     return line.strip()
 
-
-def parse_time(line: str) -> datetime.datetime:
-    match = re.compile(r".*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}).*").search(line)
+def parse_time_and_page_no(line: str) -> Tuple[datetime.datetime, int]:
+    match = re.compile(r".*(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\s*\|\s*Page No\.:\s*(\d+).*").search(line)
     if not match:
-        raise ValueError(f"Could not parse time: {line}")
+        raise ValueError(f"Could not parse time and page no: {line}")
 
-    return datetime.datetime.strptime(match.group(1), "%Y-%m-%d %H:%M")
+    return datetime.datetime.strptime(match.group(1), "%Y-%m-%d %H:%M"), int(match.group(2))
 
 
 def parse_possible_prefix_line(line: str) -> Tuple[Optional[str], str]:
@@ -80,39 +82,39 @@ def get_annotations(file: TextIO) -> AnnotationList:
 
     section_name: Optional[str] = None
     time: Optional[datetime.datetime] = None
+    page_number: Optional[int] = None
     original_text: List[str] = []
     annotations: List[str] = []
-    page_number: Optional[int] = None
 
     parsing_phase = ParsingPhase.SECTION_NAME
+    last_section_name = None
 
     for line_no, line in enumerate(file):
         prefix, line_data = parse_possible_prefix_line(line)
-        if prefix == "Original Text":
-            parsing_phase = ParsingPhase.ORIGINAL_TEXT
-        elif prefix == "Annotations":
+        if prefix == "Note":
             parsing_phase = ParsingPhase.ANNOTATIONS
-        elif prefix == "Page Number":
-            parsing_phase = ParsingPhase.PAGE_NUMBER
         elif is_annotation_end(line):
             parsing_phase = ParsingPhase.END
 
         if line_no == 0:
-            name = parse_name(line)
-        elif line_no == 1:
-            author = parse_author(line)
+            name, author = parse_name_and_author(line)
         elif parsing_phase == ParsingPhase.SECTION_NAME:
             section_name = parse_section_name(line)
-            parsing_phase = ParsingPhase.TIME
-        elif parsing_phase == ParsingPhase.TIME:
-            time = parse_time(line)
+            if section_name is None:
+                section_name = last_section_name
+                parsing_phase = ParsingPhase.TIME_AND_PAGE_NO
+                time, page_number = parse_time_and_page_no(line)
+                parsing_phase = ParsingPhase.ORIGINAL_TEXT
+            else:
+                last_section_name = section_name
+                parsing_phase = ParsingPhase.TIME_AND_PAGE_NO
+        elif parsing_phase == ParsingPhase.TIME_AND_PAGE_NO:
+            time, page_number = parse_time_and_page_no(line)
             parsing_phase = ParsingPhase.ORIGINAL_TEXT
         elif parsing_phase == ParsingPhase.ORIGINAL_TEXT:
             original_text.append(line_data)
         elif parsing_phase == ParsingPhase.ANNOTATIONS:
             annotations.append(line_data)
-        elif parsing_phase == ParsingPhase.PAGE_NUMBER:
-            page_number = int(line_data)
         elif parsing_phase == ParsingPhase.END:
             if section_name is None:
                 raise ValueError(
@@ -129,9 +131,9 @@ def get_annotations(file: TextIO) -> AnnotationList:
                 Annotation(
                     section_name=section_name,
                     time=time,
+                    page_number=page_number,
                     original_text="\n".join(original_text),
                     annotations="\n".join(annotations),
-                    page_number=page_number,
                 )
             )
             section_name = None

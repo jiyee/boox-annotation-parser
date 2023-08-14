@@ -20,9 +20,9 @@ class BaseSerializer(metaclass=ABCMeta):
                 {
                     "section_name": annotation.section_name,
                     "time": annotation.time.strftime("%Y-%m-%d %H:%M"),
+                    "page_number": annotation.page_number,
                     "original_text": annotation.original_text,
                     "annotations": annotation.annotations,
-                    "page_number": annotation.page_number,
                 }
             )
 
